@@ -41,6 +41,12 @@ jobs:
           path: omarchy-iso
           persist-credentials: false
 
+      # Ubuntu's AppArmor gives an unprivileged process no capabilities inside
+      # a user namespace it creates, in a container as anywhere else, and the
+      # tests of the root helpers rely on exactly those.
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       # The tests run where the code they cover runs: on Arch. The container
       # boots systemd because the elsewhen tests ask the real timedatectl for
       # its zones. It is privileged because the tests of the root helpers run
