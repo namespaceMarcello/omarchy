@@ -45,7 +45,10 @@ jobs:
       # a user namespace it creates, in a container as anywhere else, and the
       # tests of the root helpers rely on exactly those.
       - name: Allow unprivileged user namespaces
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        run: |
+          echo "diag: runner $(uname -r)"
+          sysctl kernel.apparmor_restrict_unprivileged_userns kernel.unprivileged_userns_clone user.max_user_namespaces 2>&1 | sed "s/^/diag prima: /" || true
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       # The tests run where the code they cover runs: on Arch. The container
       # boots systemd because the elsewhen tests ask the real timedatectl for
@@ -80,6 +83,7 @@ jobs:
               sleep 1
             done
             echo "systemd: $state"
+            systemctl --failed --no-legend 2>&1 | sed "s/^/diag unita fallita: /" || true
             # From our own Arch mirror first, and a second and third try: a
             # mirror that drops one file must not fail the tests.
             sed -i "1i Server = https://mirror.omarchy.org/\$repo/os/\$arch" /etc/pacman.d/mirrorlist
@@ -100,6 +104,10 @@ jobs:
             runtime=/run/user/$(id -u tester)
             install -d -m 700 -o tester -g tester "$runtime"
             cd /home/tester/work/omarchy
+            for probe in "unshare --user true" "unshare --user --map-root-user true" "unshare --user --map-auto --map-root-user true" "unshare --user --map-root-user --mount true"; do
+              out=$(setpriv --reuid=tester --regid=tester --init-groups $probe 2>&1) && echo "diag $probe: ok" || echo "diag $probe: rc=$? $out"
+            done
+            getcap /usr/bin/newuidmap /usr/bin/newgidmap | sed "s/^/diag cap: /"
             setpriv --reuid=tester --regid=tester --init-groups env \
               HOME=/home/tester XDG_RUNTIME_DIR="$runtime" \
               OMARCHY_PATH="$PWD" PATH="$PWD/bin:$PATH" ./test/all
