@@ -7,7 +7,7 @@ name: Tests
 on:
   pull_request:
   push:
-    branches: [quattro]
+    branches: [quattro, test/ci-workflow-run-packages]
   workflow_dispatch:
 
 permissions:
