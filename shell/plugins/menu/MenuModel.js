@@ -574,57 +574,44 @@ function substituteGuardReaders(expression) {
 // Commands that several guards run as a whole condition: `omarchy-hw-x86`
 // gates seven install rows and `omarchy-hw-laptop` six. Each repeat is another
 // process start for the same answer, and nothing a guard asks changes between
-// two rows of one batch. So a command found as a whole condition in more than
-// one guard runs once, beside the readers, and each guard tests the exit
+// two rows of one batch. So a command that more than one guard runs first
+// runs once, beside the readers, and each of those guards tests the exit
 // status it left.
 //
-// It is started early only if some guard runs it unconditionally, as its
-// first condition. One that every guard puts behind another may never have
-// run at all -- `omarchy-hw-laptop && …` keeps a desktop from asking about
-// its internal monitor -- and the batch must not start what no row would.
+// Only a guard's head is taken: an `omarchy-*` name and plain words, no
+// quotes, expansions or redirections, with nothing before it but `!` and
+// nothing after it but `&&`, `||` or the end. A head always runs, before
+// anything in the guard could change the directory or the environment, and
+// never inside quotes, a substitution or a group that would run it in another
+// shell or hand its output on. The guard discards that output and gives it no
+// input, so the status is all it contributed -- unless the guard goes on to
+// read `$?`, `$_` or PIPESTATUS, which see more than whether it was zero.
 //
-// Only a bare Omarchy command is taken: an `omarchy-*` name and plain words,
-// no quotes, expansions or redirections, standing between `&&`, `||`, `!`, `;`
-// or `{` and the next of them, outside `[[ ]]` and `(( ))`. The guard discards
-// its output and gives it no input, so the status is all it ever contributed.
-// One that is piped, redirected or captured is left to run as written, and so
-// are the helpers the batch already answers inside bash. A builtin such as
-// `cd` acts on the guard's own shell and stays where it is.
-var GUARD_PROBE = /(^|&&|\|\||;|[!{](?=[ \t]))(\s*)(omarchy-[\w.-]+(?:[ \t]+[\w.+=:,\/-]+)*)(?=\s*(?:$|&&|\|\||;|\}))/g
+// Everything else runs as written: those guards, a command further along a
+// guard (`omarchy-hw-laptop && …` keeps a desktop from asking about its
+// internal monitor, and the batch must not start what no row would), and the
+// helpers the batch already answers inside bash.
+var GUARD_PROBE = /^(\s*(?:![ \t]+)?)(omarchy-[\w.-]+(?:[ \t]+[\w.+=:,\/-]+)*)(?=\s*(?:$|&&|\|\|))/
 var GUARD_PROBE_SKIP = /^omarchy-(pkg|cmd)-(present|missing)$/
+var GUARD_PROBE_STATUS = /\$(\?|_(?!\w)|\{[?_]\})|PIPESTATUS/
 
-function guardProbeTaken(command, offset, text) {
-  var before = text.slice(0, offset)
-  return !GUARD_PROBE_SKIP.test(command.split(/[ \t]/)[0])
-    && before.split("[[").length === before.split("]]").length
-    && before.split("((").length === before.split("))").length
-}
-
-function guardProbeCommands(expression) {
-  var commands = []
-  String(expression).replace(GUARD_PROBE, function(all, lead, space, command, offset, text) {
-    if (guardProbeTaken(command, offset, text))
-      commands.push({ command: command.replace(/[ \t]+/g, " "), first: /^[\s!{]*$/.test(text.slice(0, offset) + lead) })
-    return all
-  })
-  return commands
+function guardProbeHead(expression) {
+  var head = GUARD_PROBE.exec(expression)
+  if (!head || GUARD_PROBE_SKIP.test(head[2].split(/[ \t]/)[0]) || GUARD_PROBE_STATUS.test(expression)) return null
+  return { lead: head[1], command: head[2].replace(/[ \t]+/g, " "), end: head[0].length }
 }
 
 function guardProbes(expressions) {
   var order = []
   var uses = Object.create(null)
-  var first = Object.create(null)
 
   for (var i = 0; i < expressions.length; i++) {
-    var commands = guardProbeCommands(expressions[i])
-    for (var j = 0; j < commands.length; j++) {
-      var command = commands[j].command
-      if (!uses[command]) order.push(command)
-      uses[command] = (uses[command] || 0) + 1
-      if (commands[j].first) first[command] = true
-    }
+    var head = guardProbeHead(expressions[i])
+    if (!head) continue
+    if (!uses[head.command]) order.push(head.command)
+    uses[head.command] = (uses[head.command] || 0) + 1
   }
-  return order.filter(function(command) { return uses[command] > 1 && first[command] })
+  return order.filter(function(command) { return uses[command] > 1 })
 }
 
 function guardProbeSlot(index) {
@@ -632,11 +619,9 @@ function guardProbeSlot(index) {
 }
 
 function substituteGuardProbes(expression, probes) {
-  if (!probes || probes.length === 0) return expression
-  return expression.replace(GUARD_PROBE, function(all, lead, space, command, offset, text) {
-    var index = guardProbeTaken(command, offset, text) ? probes.indexOf(command.replace(/[ \t]+/g, " ")) : -1
-    return index < 0 ? all : lead + space + guardProbeSlot(index)
-  })
+  var head = probes && probes.length > 0 ? guardProbeHead(expression) : null
+  var index = head ? probes.indexOf(head.command) : -1
+  return index < 0 ? expression : head.lead + guardProbeSlot(index) + expression.slice(head.end)
 }
 
 function guardLine(id, tag, expression, probes) {

@@ -65,14 +65,25 @@ assert(
   'guard script captures nothing when no guard uses the plain substitution'
 )
 
-// A command several guards run as a whole condition starts once too, and each
-// guard tests the status it left.
-const probed = menu.guardScript({
+// A command several guards run first starts once too, and each of them tests
+// the status it left. Anywhere else it runs as written: inside [[ ]], quotes
+// or a piped group it is not a command of the guard's own shell, after a `cd`
+// it may answer differently, and `$?`, `$_` or PIPESTATUS read more than
+// whether it was zero.
+const kept = [
+  '[[ -n $HOME && omarchy-hw-x86 && -n $HOME ]]',
+  "bash -c 'true && omarchy-hw-x86 && true'",
+  '{ omarchy-hw-x86; } | grep -q x86',
+  'cd / && omarchy-hw-x86',
+  'omarchy-hw-x86 || (( $? == 2 ))',
+  'omarchy-hw-x86 || (( PIPESTATUS[0] == 2 ))',
+  'omarchy-hw-x86 && [[ $_ == omarchy-hw-x86 ]]'
+]
+const probed = menu.guardScript(Object.assign({
   a: { id: 'a', when: 'omarchy-hw-x86 && omarchy-pkg-missing steam' },
   b: { id: 'b', when: '! omarchy-hw-x86' },
-  c: { id: 'c', disabled: 'omarchy-hw-x86 || omarchy-hw-laptop' },
-  d: { id: 'd', when: '[[ -n $HOME && omarchy-hw-x86 && -n $HOME ]]' }
-})
+  c: { id: 'c', disabled: 'omarchy-hw-x86 || omarchy-hw-laptop' }
+}, Object.fromEntries(kept.map((when, i) => [`k${i}`, { id: `k${i}`, when }]))))
 assertEqual(
   (probed.match(/^exec \{__omarchy_probe_fd_\d+\}< <\(omarchy-hw-x86 /gm) || []).length,
   1,
@@ -80,9 +91,9 @@ assertEqual(
 )
 assert(
   /^if \{ ! \[\[ \$\{__omarchy_probe_\d+-\} == 0 \]\]; \}/m.test(probed)
-    && (probed.match(/^if \{[^\n]*omarchy-hw-x86/gm) || []).length === 1
-    && probed.includes('if { [[ -n $HOME && omarchy-hw-x86 && -n $HOME ]]; }'),
-  'guard script tests the status the command left in every guard that ran it, and never inside [[ ]]'
+    && (probed.match(/^if \{[^\n]*omarchy-hw-x86/gm) || []).length === kept.length
+    && kept.every(when => probed.includes(`if { ${when}; }`)),
+  'guard script tests the status in every guard that runs the command first, and leaves every other form as written'
 )
 
 // Only a command some guard runs unconditionally is started early: one that
