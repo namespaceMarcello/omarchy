@@ -55,6 +55,31 @@ export -f omarchy-dns omarchy-hyprland-corners
   fail "a captured reader keeps exactly what \$(...) keeps" "got: $shape_result"
 pass "a captured reader keeps exactly what \$(...) keeps"
 
+# A command several guards test runs once, and every guard answers from the
+# status it left, negated, chained or alone, exactly as running it again would.
+probe_script=$(node -e '
+  const path = require("path")
+  const menu = require(path.join(process.env.ROOT, "shell/plugins/menu/MenuModel.js"))
+  process.stdout.write(menu.guardScript({
+    alone: { id: "alone", when: "omarchy-test-yes" },
+    negated: { id: "negated", when: "! omarchy-test-yes" },
+    either: { id: "either", when: "omarchy-test-no || omarchy-test-yes" },
+    failed: { id: "failed", checked: "omarchy-test-no" },
+    both: { id: "both", disabled: "omarchy-test-yes && omarchy-test-no" }
+  }))
+')
+probe_log="$parallel_root/probe.log"
+probe_result=$(PROBE_LOG="$probe_log" bash -c '
+omarchy-test-yes() { echo yes >>"$PROBE_LOG"; }
+omarchy-test-no() { echo no >>"$PROBE_LOG"; return 3; }
+export -f omarchy-test-yes omarchy-test-no
+'"$probe_script" | sort | tr '\n' ' ')
+[[ $probe_result == "alone:w:1 both:d:0 either:w:1 failed:c:0 negated:w:0 " ]] ||
+  fail "a probed command answers every guard as running it would" "got: $probe_result"
+[[ $(sort "$probe_log" | tr '\n' ' ') == "no yes " ]] ||
+  fail "a command several guards test runs once per batch" "ran: $(tr '\n' ' ' <"$probe_log")"
+pass "a command several guards test runs once per batch and answers each of them"
+
 # The batch is done only when every group is: a slow guard's line still
 # arrives before it exits.
 slow_script=$(node -e '
